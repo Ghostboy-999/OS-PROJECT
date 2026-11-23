@@ -14,13 +14,13 @@ INSTANCE = os.getenv("INSTANCE", "backend-local")
 REQUEST_COUNT = Counter(
     "http_requests_total",
     "Total de solicitudes HTTP recibidas",
-    ["instance", "method", "endpoint", "status"]
+    ["backend", "method", "endpoint", "status"]
 )
 
 REQUEST_LATENCY = Histogram(
     "http_request_duration_seconds",
     "Tiempo de respuesta de las solicitudes HTTP",
-    ["instance", "method", "endpoint"]
+    ["backend", "method", "endpoint"]
 )
 
 

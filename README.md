@@ -7,7 +7,7 @@ Proyecto final de Sistemas Operativos: infraestructura en contenedores Docker co
 | Servicio | Función | Puerto en el host |
 |---|---|---|
 | `nginx` | Proxy inverso y balanceo de carga (Round Robin) hacia los backends | 8080 |
-| `backend1`, `backend2`, `backend3` | Aplicación web (Python + Flask). Cada instancia muestra su número y expone `/metrics` | no expuestos |
+| `backend1`, `backend2`, `backend3` | Aplicación web (Python + Flask). Cada instancia responde con su nombre (`backend1`, `backend2`, `backend3`) y expone `/metrics` | no expuestos |
 | `nginx-exporter` | Lee el `stub_status` de Nginx y lo convierte en métricas para Prometheus | no expuesto |
 | `cadvisor` | Métricas de CPU, memoria, red y disco de cada contenedor | no expuesto |
 | `prometheus` | Recolecta las métricas de backends, exportador y cAdvisor | 9090 |
@@ -82,20 +82,20 @@ Los tres backends deben aparecer como `(healthy)`.
 
 ## Verificar el balanceo de carga
 
-Refrescar varias veces http://localhost:8080 en el navegador: el número de instancia cambia.
+Refrescar varias veces http://localhost:8080 en el navegador: el valor de `"instance"` cambia entre `backend1`, `backend2` y `backend3`.
 
 Desde la terminal, contar 30 peticiones:
 
 ```bash
-for i in $(seq 1 30); do curl -s localhost:8080 | grep -o "[Ii]nstancia [0-9]"; done | sort | uniq -c
+for i in $(seq 1 30); do curl -s localhost:8080 | grep -o "backend[0-9]"; done | sort | uniq -c
 ```
 
 Resultado esperado (Round Robin):
 
 ```
-     10 Instancia 1
-     10 Instancia 2
-     10 Instancia 3
+     10 backend1
+     10 backend2
+     10 backend3
 ```
 
 Los backends no son accesibles directamente desde fuera de la red de Docker; todo el tráfico pasa por Nginx.
