@@ -1,7 +1,25 @@
 global:
   scrape_interval: 5s
+  evaluation_interval: 5s
 
 scrape_configs:
-  # TODO: job para los 3 backends (/metrics)
-  # TODO: job para nginx-exporter (puerto 9113)
-  # TODO: job para cadvisor (puerto 8080)
+  # Prometheus se monitorea a sí mismo
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Las tres instancias del backend exponen /metrics en el puerto 5000
+  - job_name: "backends"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend1:5000", "backend2:5000", "backend3:5000"]
+
+  # Métricas de Nginx a través del exportador
+  - job_name: "nginx"
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+
+  # Métricas de uso de recursos de los contenedores
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
