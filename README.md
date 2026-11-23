@@ -61,7 +61,7 @@ OS-PROJECT/
 - Git.
 - Al menos 4 GB de RAM y 2 CPU para la máquina donde corre Docker.
 - Los puertos 8080, 9090 y 3000 libres.
-- [k6](https://k6.io/) instalado en la máquina física para la prueba de carga. En Windows: `winget install k6 --source winget`.
+- [k6](https://k6.io/) en la máquina física para la prueba de carga (ver la sección [6. Prueba de carga](#6-prueba-de-carga)).
 
 ### Si Docker corre en una máquina virtual de VirtualBox
 
@@ -72,6 +72,19 @@ Para entrar desde el navegador de la máquina física, agrega estas reglas en **
 | nginx | 8080 | 8080 |
 | prometheus | 9090 | 9090 |
 | grafana | 3000 | 3000 |
+
+El puerto invitado es 8080 (no 80) porque la máquina virtual recibe el tráfico en el 8080 y Docker lo envía al puerto 80 de Nginx.
+
+También se pueden crear desde PowerShell en Windows, con la máquina virtual encendida (cambiar `"Nombre de la VM"` por el nombre que aparece en VirtualBox):
+
+```powershell
+$vb = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
+& $vb controlvm "Nombre de la VM" natpf1 "nginx,tcp,,8080,,8080"
+& $vb controlvm "Nombre de la VM" natpf1 "grafana,tcp,,3000,,3000"
+& $vb controlvm "Nombre de la VM" natpf1 "prometheus,tcp,,9090,,9090"
+```
+
+Para comprobar que funcionan, abrir http://localhost:8080 en el navegador de Windows (no en el de la máquina virtual). En PowerShell, `netstat -ano | findstr ":8080 :3000 :9090"` debe mostrar los tres puertos en estado `LISTENING`.
 
 ## 1. Levantar la infraestructura
 
@@ -184,10 +197,30 @@ Abrir http://localhost:3000 (usuario `admin`, contraseña `admin`). No hace falt
 
 ## 6. Prueba de carga
 
-Desde la máquina física, con la infraestructura en marcha:
+La prueba se ejecuta desde la máquina física (no desde la máquina virtual), con la infraestructura en marcha y el puerto 8080 accesible desde el navegador.
+
+### Instalar k6
+
+| Sistema | Instalación |
+|---|---|
+| Windows | `winget install k6 --source winget` |
+| Windows sin instalador | Descargar `k6-vX.Y.Z-windows-amd64.zip` desde [las versiones de k6](https://github.com/grafana/k6/releases), descomprimirlo y usar `k6.exe` directamente |
+| Linux / macOS | Ver la [guía de instalación de k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) |
+
+Comprobar con `k6 version` (o `.\k6.exe version` si se usa la versión portable).
+
+### Ejecutar la prueba
+
+Desde la carpeta del repositorio:
 
 ```bash
 k6 run loadtest/k6-test.js
+```
+
+Con la versión portable de Windows, desde la carpeta donde está `k6.exe` (copiar ahí `loadtest/k6-test.js`):
+
+```powershell
+.\k6.exe run k6-test.js
 ```
 
 Si Docker corre en otra máquina, indicar la dirección:
@@ -210,6 +243,27 @@ Criterios de éxito (*thresholds*): menos del 1 % de errores (`http_req_failed`)
 
 Mientras corre la prueba, observar en Grafana cómo suben la tasa de solicitudes, la latencia, las conexiones de Nginx y el uso de CPU. Al terminar, k6 muestra un resumen con `http_req_duration` (avg, p90, p95, p99), `http_req_failed`, `checks` y los contadores `respuestas_backend1`, `respuestas_backend2` y `respuestas_backend3`, que muestran cómo se repartió la carga.
 
+Recomendaciones:
+
+- Abrir Grafana antes de empezar y dejar el rango en **Last 15 minutes** para ver la prueba completa.
+- Si todas las peticiones fallan con `connection refused` / `actively refused it`, el puerto 8080 no llega a la máquina física: revisar el reenvío de puertos de VirtualBox.
+
+### Resultados de referencia
+
+Prueba ejecutada desde Windows contra la infraestructura en una máquina virtual de VirtualBox (máximo 100 usuarios virtuales):
+
+| Métrica | Resultado |
+|---|---|
+| Peticiones totales | 15 482 (≈ 73,6 por segundo; pico ≈ 145 por segundo) |
+| Errores (`http_req_failed`) | 0,00 % |
+| Latencia mediana / p95 / p99 | 4,34 ms / 14,43 ms / 33,73 ms |
+| Reparto por backend | 5 158 / 5 162 / 5 162 (≈ 33 % cada uno) |
+| CPU máxima por backend | < 10 % |
+| Memoria por backend | ≈ 27–55 MiB |
+| Conexiones activas máximas en Nginx | 101 |
+
+Los dos *thresholds* se cumplieron. La latencia que mide k6 (≈ 14 ms en p95) es mayor que la que mide el backend (< 5 ms) porque k6 incluye todo el recorrido: Windows → NAT de VirtualBox → Docker → Nginx → backend.
+
 ## Comandos útiles
 
 | Acción | Comando |
@@ -228,6 +282,9 @@ Mientras corre la prueba, observar en Grafana cómo suben la tasa de solicitudes
 | `port is already allocated` | Otro contenedor usa el puerto (por ejemplo, un laboratorio anterior). Detenerlo con `docker compose down` en su carpeta, o cambiar el puerto en `docker-compose.yml`. |
 | Nginx no arranca | Revisar que los backends estén `healthy` (`docker compose ps`) y ver `docker compose logs nginx`. |
 | Un target aparece DOWN en Prometheus | Ver los logs de ese servicio, por ejemplo `docker compose logs nginx-exporter`. |
+| Desde Windows, `localhost:8080` da `ERR_CONNECTION_REFUSED` | Falta el reenvío de puertos o no está activo. Revisar con `VBoxManage showvminfo "Nombre de la VM" \| findstr /i "Rule"` y volver a crear las reglas (ver *Requisitos previos*). |
+| `winget` falla con un error de certificado | La red (por ejemplo, la de la universidad) bloquea la descarga. Usar la versión portable de k6 descargada por otro medio. |
+| Grafana muestra *No data* en la latencia | No hay tráfico en ese momento. Abrir http://localhost:8080 varias veces o ejecutar la prueba de carga. |
 | cAdvisor no muestra contenedores | Usar una versión reciente de cAdvisor (0.54 o superior) con Docker 29. Ver `docker compose logs cadvisor`. |
 
 ## Detener la infraestructura
