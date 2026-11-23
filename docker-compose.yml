@@ -41,7 +41,60 @@ services:
       backend3: { condition: service_healthy }
     networks: [infra]
     restart: unless-stopped
-    
+
+  # Exportador: convierte el stub_status de Nginx en métricas para Prometheus
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.4.0
+    container_name: nginx-exporter
+    command:
+      - --nginx.scrape-uri=http://nginx:8081/stub_status
+    depends_on:
+      - nginx
+    networks: [infra]
+    restart: unless-stopped
+
+  # cAdvisor: uso de CPU, memoria, red y disco de cada contenedor
+  cadvisor:
+    image: ghcr.io/google/cadvisor:0.55.1
+    container_name: cadvisor
+    privileged: true
+    devices:
+      - /dev/kmsg
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=10s
+      - --store_container_labels=false
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks: [infra]
+    restart: unless-stopped
+
+  # Prometheus: recolecta las métricas de backends, exportador y cAdvisor
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - backend1
+      - backend2
+      - backend3
+      - nginx-exporter
+      - cadvisor
+    networks: [infra]
+    restart: unless-stopped
+
 networks:
   infra:
     driver: bridge
