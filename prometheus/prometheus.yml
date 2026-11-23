@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  # TODO: job para los 3 backends (/metrics)
+  # TODO: job para nginx-exporter (puerto 9113)
+  # TODO: job para cadvisor (puerto 8080)
