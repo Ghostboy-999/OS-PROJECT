@@ -4,39 +4,52 @@ Proyecto final de Sistemas Operativos: infraestructura en contenedores Docker co
 
 ## Arquitectura
 
-| Servicio | Función | Puerto en el host |
-|---|---|---|
-| `nginx` | Proxy inverso y balanceo de carga (Round Robin) hacia los backends | 8080 |
-| `backend1`, `backend2`, `backend3` | Aplicación web (Python + Flask). Cada instancia responde con su nombre (`backend1`, `backend2`, `backend3`) y expone `/metrics` | no expuestos |
-| `nginx-exporter` | Lee el `stub_status` de Nginx y lo convierte en métricas para Prometheus | no expuesto |
-| `cadvisor` | Métricas de CPU, memoria, red y disco de cada contenedor | no expuesto |
-| `prometheus` | Recolecta las métricas de backends, exportador y cAdvisor | 9090 |
-| `grafana` | Dashboards con latencia, tasa de solicitudes y uso de recursos | 3000 |
+```
+                 ┌──────────────── red Docker "infra" ─────────────────┐
+ Cliente ──8080──▶ nginx ──┬──▶ backend1:5000 ─┐                        │
+                 │         ├──▶ backend2:5000 ─┼──/metrics──┐           │
+                 │         └──▶ backend3:5000 ─┘            │           │
+                 │   :8081/stub_status ◀── nginx-exporter ──┤           │
+                 │   contenedores      ◀── cadvisor ────────┤           │
+                 │                                          ▼           │
+ Navegador ─9090─▶                                     prometheus ◀── grafana ◀─3000── Navegador
+                 └──────────────────────────────────────────────────────┘
+```
 
-Todos los servicios están en la red personalizada `infra`. Solo Nginx, Prometheus y Grafana publican puertos; los backends solo son accesibles a través de Nginx.
+| Servicio | Imagen | Función | Puerto en el host |
+|---|---|---|---|
+| `nginx` | `nginx:1.27-alpine` | Proxy inverso y balanceo de carga (Round Robin) hacia los backends | 8080 |
+| `backend1`, `backend2`, `backend3` | construida desde `./backend` | Aplicación Flask. Responde con su nombre y expone `/health` y `/metrics` | no expuestos |
+| `nginx-exporter` | `nginx/nginx-prometheus-exporter:1.4.0` | Lee `http://nginx:8081/stub_status` y lo convierte en métricas | no expuesto |
+| `cadvisor` | `ghcr.io/google/cadvisor:0.55.1` | Métricas de CPU, memoria, red y disco de cada contenedor | no expuesto |
+| `prometheus` | `prom/prometheus:v3.5.0` | Recolecta las métricas cada 5 segundos | 9090 |
+| `grafana` | — | Dashboards con latencia, tasa de solicitudes y uso de recursos | 3000 |
 
-Los datos de Prometheus y Grafana se guardan en los volúmenes `prometheus_data` y `grafana_data`.
+- Todos los servicios están en la red personalizada `infra`.
+- Solo Nginx, Prometheus y Grafana publican puertos. Los backends solo son accesibles a través de Nginx.
+- El `stub_status` de Nginx escucha en el puerto interno 8081, que no se publica.
+- Los datos de Prometheus y Grafana se guardan en los volúmenes `prometheus_data` y `grafana_data`.
 
 ## Estructura del repositorio
 
 ```
 OS-PROJECT/
-├── docker-compose.yml
+├── docker-compose.yml        # definición de todos los servicios, red y volúmenes
 ├── README.md
 ├── backend/
-│   ├── Dockerfile
-│   ├── app.py
+│   ├── Dockerfile            # imagen del backend (Python 3.12 + Gunicorn)
+│   ├── app.py                # aplicación Flask con métricas de Prometheus
 │   └── requirements.txt
 ├── nginx/
-│   └── nginx.conf
+│   └── nginx.conf            # proxy inverso, balanceo y stub_status
 ├── prometheus/
-│   └── prometheus.yml
+│   └── prometheus.yml        # targets que recolecta Prometheus
 ├── grafana/
 │   └── provisioning/
-│       ├── datasources/
-│       └── dashboards/
+│       ├── datasources/      # conexión de Grafana con Prometheus
+│       └── dashboards/       # dashboards
 └── loadtest/
-    └── k6-test.js
+    └── k6-test.js            # prueba de carga
 ```
 
 ## Requisitos previos
@@ -44,6 +57,7 @@ OS-PROJECT/
 - Docker Engine con el plugin de Docker Compose v2 (`docker compose version`).
 - Git.
 - Al menos 4 GB de RAM y 2 CPU para la máquina donde corre Docker.
+- Los puertos 8080, 9090 y 3000 libres.
 - [k6](https://k6.io/) instalado en la máquina física para la prueba de carga. En Windows: `winget install k6 --source winget`.
 
 ### Si Docker corre en una máquina virtual de VirtualBox
@@ -56,7 +70,7 @@ Para entrar desde el navegador de la máquina física, agrega estas reglas en **
 | prometheus | 9090 | 9090 |
 | grafana | 3000 | 3000 |
 
-## Cómo levantar la infraestructura
+## 1. Levantar la infraestructura
 
 ```bash
 git clone https://github.com/Ghostboy-999/OS-PROJECT.git
@@ -64,15 +78,17 @@ cd OS-PROJECT
 docker compose up -d --build
 ```
 
-Comprobar que todos los contenedores estén arriba:
+La primera vez tarda unos minutos porque descarga las imágenes.
+
+Comprobar el estado:
 
 ```bash
 docker compose ps
 ```
 
-Los tres backends deben aparecer como `(healthy)`.
+Deben aparecer los contenedores `backend1`, `backend2`, `backend3` (en estado `healthy`), `nginx`, `nginx-exporter`, `cadvisor` y `prometheus`. Nginx solo arranca cuando los tres backends están sanos.
 
-## URLs de acceso
+## 2. URLs de acceso
 
 | Servicio | URL |
 |---|---|
@@ -80,11 +96,16 @@ Los tres backends deben aparecer como `(healthy)`.
 | Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3000 (usuario `admin`, contraseña `admin`) |
 
-## Verificar el balanceo de carga
+## 3. Verificar el balanceo de carga
 
-Refrescar varias veces http://localhost:8080 en el navegador: el valor de `"instance"` cambia entre `backend1`, `backend2` y `backend3`.
+Cada respuesta indica qué backend la atendió:
 
-Desde la terminal, contar 30 peticiones:
+```bash
+curl -s localhost:8080
+# {"instance":"backend1","message":"Backend funcionando correctamente"}
+```
+
+Contar 30 peticiones:
 
 ```bash
 for i in $(seq 1 30); do curl -s localhost:8080 | grep -o "backend[0-9]"; done | sort | uniq -c
@@ -98,18 +119,65 @@ Resultado esperado (Round Robin):
      10 backend3
 ```
 
-Los backends no son accesibles directamente desde fuera de la red de Docker; todo el tráfico pasa por Nginx.
+Ver qué backend respondió en las cabeceras (Nginx agrega `X-Upstream` con su IP):
 
-## Verificar el monitoreo
+```bash
+curl -sI localhost:8080 | grep -i x-upstream
+```
 
-1. **Prometheus:** abrir http://localhost:9090 → **Status → Targets**. Todos los targets (`backends`, `nginx`, `cadvisor`, `prometheus`) deben estar en estado **UP**.
-2. **Grafana:** abrir http://localhost:3000. El datasource de Prometheus se carga automáticamente desde `grafana/provisioning`. El dashboard muestra:
-   - tasa de solicitudes por instancia,
-   - latencia (percentiles p50 y p95),
-   - conexiones y peticiones de Nginx,
-   - uso de CPU, memoria y red de cada contenedor.
+Ver el registro de Nginx, donde `upstream=` muestra a qué backend se envió cada petición:
 
-## Prueba de carga
+```bash
+docker compose logs --tail 10 nginx
+```
+
+Los backends no son accesibles directamente desde fuera de la red de Docker: todo el tráfico pasa por Nginx.
+
+### Tolerancia a fallos
+
+Apagar un backend y comprobar que el servicio sigue respondiendo con los otros dos:
+
+```bash
+docker compose stop backend2
+for i in $(seq 1 6); do curl -s localhost:8080 | grep -o "backend[0-9]"; done | sort | uniq -c
+docker compose start backend2
+```
+
+## 4. Verificar el monitoreo con Prometheus
+
+Abrir http://localhost:9090 → **Status → Target health**. Todos los targets deben estar en **UP**:
+
+| Job | Targets |
+|---|---|
+| `backends` | `backend1:5000`, `backend2:5000`, `backend3:5000` |
+| `nginx` | `nginx-exporter:9113` |
+| `cadvisor` | `cadvisor:8080` |
+| `prometheus` | `localhost:9090` |
+
+Consultas de ejemplo en la pestaña **Query**:
+
+| Qué muestra | Consulta |
+|---|---|
+| Total de peticiones por backend | `http_requests_total{endpoint="/"}` |
+| Tasa de peticiones por segundo por backend | `sum by (backend) (rate(http_requests_total{endpoint="/"}[1m]))` |
+| Latencia p95 por backend (segundos) | `histogram_quantile(0.95, sum by (le, backend) (rate(http_request_duration_seconds_bucket{endpoint="/"}[1m])))` |
+| Conexiones activas en Nginx | `nginx_connections_active` |
+| Peticiones por segundo en Nginx | `rate(nginx_http_requests_total[1m])` |
+| Memoria de cada backend | `container_memory_usage_bytes{name=~"backend.*"}` |
+| CPU de cada contenedor | `rate(container_cpu_usage_seconds_total{name=~".+"}[1m])` |
+
+Las métricas del backend también cuentan las peticiones a `/metrics` (de Prometheus) y a `/health` (del healthcheck); por eso las consultas filtran con `endpoint="/"`.
+
+## 5. Dashboards en Grafana
+
+Abrir http://localhost:3000 (usuario `admin`, contraseña `admin`). El datasource de Prometheus se carga automáticamente desde `grafana/provisioning`. El dashboard muestra:
+
+- tasa de solicitudes por backend,
+- latencia (p50 y p95),
+- conexiones y peticiones de Nginx,
+- uso de CPU, memoria y red de cada contenedor.
+
+## 6. Prueba de carga
 
 Desde la máquina física, con la infraestructura en marcha:
 
@@ -118,6 +186,26 @@ k6 run loadtest/k6-test.js
 ```
 
 Mientras corre la prueba, observar en Grafana cómo suben la tasa de solicitudes, la latencia y el uso de CPU. Al terminar, k6 muestra un resumen con `http_req_duration` (p90, p95) y `http_req_failed`.
+
+## Comandos útiles
+
+| Acción | Comando |
+|---|---|
+| Ver el estado | `docker compose ps` |
+| Ver los logs de un servicio | `docker compose logs -f nginx` |
+| Reconstruir tras cambiar el backend | `docker compose up -d --build` |
+| Validar la configuración de Nginx | `docker compose exec nginx nginx -t` |
+| Recargar Nginx sin detenerlo | `docker compose exec nginx nginx -s reload` |
+| Reiniciar un servicio | `docker compose restart prometheus` |
+
+## Solución de problemas
+
+| Problema | Solución |
+|---|---|
+| `port is already allocated` | Otro contenedor usa el puerto (por ejemplo, un laboratorio anterior). Detenerlo con `docker compose down` en su carpeta, o cambiar el puerto en `docker-compose.yml`. |
+| Nginx no arranca | Revisar que los backends estén `healthy` (`docker compose ps`) y ver `docker compose logs nginx`. |
+| Un target aparece DOWN en Prometheus | Ver los logs de ese servicio, por ejemplo `docker compose logs nginx-exporter`. |
+| cAdvisor no muestra contenedores | Usar una versión reciente de cAdvisor (0.54 o superior) con Docker 29. Ver `docker compose logs cadvisor`. |
 
 ## Detener la infraestructura
 
