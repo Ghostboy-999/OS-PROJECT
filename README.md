@@ -23,7 +23,7 @@ Proyecto final de Sistemas Operativos: infraestructura en contenedores Docker co
 | `nginx-exporter` | `nginx/nginx-prometheus-exporter:1.4.0` | Lee `http://nginx:8081/stub_status` y lo convierte en métricas | no expuesto |
 | `cadvisor` | `ghcr.io/google/cadvisor:0.55.1` | Métricas de CPU, memoria, red y disco de cada contenedor | no expuesto |
 | `prometheus` | `prom/prometheus:v3.5.0` | Recolecta las métricas cada 5 segundos | 9090 |
-| `grafana` | — | Dashboards con latencia, tasa de solicitudes y uso de recursos | 3000 |
+| `grafana` | `grafana/grafana:12.0.0` | Dashboards con latencia, tasa de solicitudes y uso de recursos | 3000 |
 
 - Todos los servicios están en la red personalizada `infra`.
 - Solo Nginx, Prometheus y Grafana publican puertos. Los backends solo son accesibles a través de Nginx.
@@ -46,8 +46,11 @@ OS-PROJECT/
 │   └── prometheus.yml        # targets que recolecta Prometheus
 ├── grafana/
 │   └── provisioning/
-│       ├── datasources/      # conexión de Grafana con Prometheus
-│       └── dashboards/       # dashboards
+│       ├── datasources/
+│       │   └── datasource.yml        # conexión de Grafana con Prometheus
+│       └── dashboards/
+│           ├── dashboards.yml        # le dice a Grafana dónde están los dashboards
+│           └── infraestructura.json  # dashboard principal
 └── loadtest/
     └── k6-test.js            # prueba de carga
 ```
@@ -86,7 +89,7 @@ Comprobar el estado:
 docker compose ps
 ```
 
-Deben aparecer los contenedores `backend1`, `backend2`, `backend3` (en estado `healthy`), `nginx`, `nginx-exporter`, `cadvisor` y `prometheus`. Nginx solo arranca cuando los tres backends están sanos.
+Deben aparecer los contenedores `backend1`, `backend2`, `backend3` (en estado `healthy`), `nginx`, `nginx-exporter`, `cadvisor`, `prometheus` y `grafana`. Nginx solo arranca cuando los tres backends están sanos.
 
 ## 2. URLs de acceso
 
@@ -170,12 +173,14 @@ Las métricas del backend también cuentan las peticiones a `/metrics` (de Prome
 
 ## 5. Dashboards en Grafana
 
-Abrir http://localhost:3000 (usuario `admin`, contraseña `admin`). El datasource de Prometheus se carga automáticamente desde `grafana/provisioning`. El dashboard muestra:
+Abrir http://localhost:3000 (usuario `admin`, contraseña `admin`). No hace falta configurar nada: el datasource de Prometheus y el dashboard **OS-PROJECT · Infraestructura** se cargan automáticamente desde `grafana/provisioning` y el dashboard aparece como página de inicio. Se actualiza cada 5 segundos.
 
-- tasa de solicitudes por backend,
-- latencia (p50 y p95),
-- conexiones y peticiones de Nginx,
-- uso de CPU, memoria y red de cada contenedor.
+| Sección | Paneles |
+|---|---|
+| Resumen | solicitudes por segundo, latencia p95, errores 5xx, backends activos |
+| Aplicación | tasa de solicitudes por backend, latencia p50 y p95 por backend, solicitudes por código de estado, latencia promedio |
+| Nginx | conexiones (activas, leyendo, escribiendo, esperando), solicitudes y conexiones aceptadas por segundo |
+| Contenedores | CPU, memoria, red y disco de cada contenedor (cAdvisor) |
 
 ## 6. Prueba de carga
 
@@ -185,7 +190,25 @@ Desde la máquina física, con la infraestructura en marcha:
 k6 run loadtest/k6-test.js
 ```
 
-Mientras corre la prueba, observar en Grafana cómo suben la tasa de solicitudes, la latencia y el uso de CPU. Al terminar, k6 muestra un resumen con `http_req_duration` (p90, p95) y `http_req_failed`.
+Si Docker corre en otra máquina, indicar la dirección:
+
+```bash
+k6 run -e BASE_URL=http://IP_DEL_SERVIDOR:8080 loadtest/k6-test.js
+```
+
+La prueba dura 3 min 30 s y tiene cinco etapas:
+
+| Etapa | Duración | Usuarios virtuales |
+|---|---|---|
+| Calentamiento | 30 s | 0 → 10 |
+| Carga normal | 1 min | 10 → 30 |
+| Carga alta | 1 min | 30 → 60 |
+| Pico | 30 s | 60 → 100 |
+| Bajada | 30 s | 100 → 0 |
+
+Criterios de éxito (*thresholds*): menos del 1 % de errores (`http_req_failed`) y el 95 % de las respuestas en menos de 500 ms (`http_req_duration p(95)`).
+
+Mientras corre la prueba, observar en Grafana cómo suben la tasa de solicitudes, la latencia, las conexiones de Nginx y el uso de CPU. Al terminar, k6 muestra un resumen con `http_req_duration` (avg, p90, p95, p99), `http_req_failed`, `checks` y los contadores `respuestas_backend1`, `respuestas_backend2` y `respuestas_backend3`, que muestran cómo se repartió la carga.
 
 ## Comandos útiles
 

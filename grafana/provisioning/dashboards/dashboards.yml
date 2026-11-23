@@ -1,0 +1,12 @@
+# Carga los dashboards (archivos .json) de esta misma carpeta
+apiVersion: 1
+
+providers:
+  - name: os-project
+    folder: OS-PROJECT
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards

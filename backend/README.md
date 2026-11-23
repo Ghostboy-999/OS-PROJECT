@@ -56,7 +56,7 @@ Contador que registra la cantidad total de solicitudes HTTP recibidas.
 
 Se clasifica mediante las siguientes etiquetas:
 
-- `instance`: instancia que recibió la solicitud.
+- `backend`: instancia que recibió la solicitud (`backend1`, `backend2` o `backend3`).
 - `method`: método HTTP utilizado.
 - `endpoint`: ruta solicitada.
 - `status`: código de respuesta HTTP.
