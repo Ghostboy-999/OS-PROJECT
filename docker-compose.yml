@@ -1,12 +1,32 @@
 name: os-project
 
 services:
-  # TODO: backend1, backend2, backend3 (mismo build: ./backend, distinto INSTANCE)
-  # TODO: nginx (puerto 8080:80, monta nginx/nginx.conf)
-  # TODO: nginx-exporter (lee el stub_status de nginx)
-  # TODO: prometheus (puerto 9090, monta prometheus/prometheus.yml, volumen prometheus_data)
-  # TODO: cadvisor
-  # TODO: grafana (puerto 3000, volumen grafana_data, monta grafana/provisioning)
+  backend1: &backend
+    build: ./backend
+    image: proyecto-final-backend:1.0
+    container_name: backend1
+    environment:
+      INSTANCE: "backend1"
+    networks: [infra]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  backend2:
+    <<: *backend
+    container_name: backend2
+    environment:
+      INSTANCE: "backend2"
+
+  backend3:
+    <<: *backend
+    container_name: backend3
+    environment:
+      INSTANCE: "backend3"
 
 networks:
   infra:
